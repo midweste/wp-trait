@@ -598,7 +598,7 @@ if (!class_exists('WPTrait\Data\Post')) {
                 'order' => 'DESC'
             ];
 
-            $args = wp_parse_args($default, $arg);
+            $args = wp_parse_args($arg, $default);
 
             # Return { $query->posts }
             # Get SQL { $query->request }
