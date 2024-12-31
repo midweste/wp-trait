@@ -608,7 +608,7 @@ if (!class_exists('WPTrait\Data\Post')) {
 
         public function list($args = []): array
         {
-            $query = $this->query($args);
+            $query = self::query($args);
             return ($query->have_posts() ? $query->posts : []);
         }
 
