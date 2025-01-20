@@ -75,7 +75,7 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                 throw new \Exception('Fields are required.');
             }
             foreach ($fields as $field) {
-                if (empty($field['id'])) {
+                if (empty($field['id']) && !$field['id'] instanceof \Closure) {
                     throw new \Exception('Field id is required.');
                 }
             }
@@ -93,17 +93,23 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
             add_settings_section('default', 'Settings', null, $slug);
 
             foreach ($fields as $field) {
-                if (empty($field['id'])) {
-                    throw new \Exception('Field id is required.');
-                }
+                $callback = function ($key, $default = '') use ($field) {
+                    if (!isset($field[$key])) {
+                        return $default;
+                    }
+                    if ($field[$key] instanceof \Closure) {
+                        return call_user_func($field[$key]);
+                    }
+                    return $field[$key];
+                };
 
-                $id = $field['id'];
-                $label = $field['label'] ?? $id;
-                $type = $field['type'] ?? 'text';
-                $attributes = $field['attributes'] ?? [];
-                $description = $field['description'] ?? '';
-                $default = $field['default'] ?? '';
-                $enum = $field['enum'] ?? [];
+                $id = $callback('id');
+                $label = $callback('label', $id);
+                $type = $callback('type', 'text');
+                $attributes = $callback('attributes', []);
+                $description = $callback('description', '');
+                $default = $callback('default', '');
+                $enum = $callback('enum', []);
 
                 add_settings_field(
                     $id,
