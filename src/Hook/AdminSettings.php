@@ -12,10 +12,6 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
 
     trait AdminSettings
     {
-        use AdminMenu, Notice;
-
-        private array $fields = [];
-
         public function bootAdminSettings($arg = [])
         {
             $defaults = [
@@ -26,21 +22,149 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
             $this->add_action('admin_init', $args['method'], $args['priority']);
         }
 
-        public function admin_settings() {}
+        public function admin_settings()
+        {
+            $this->settings_register($this->settings_fields());
+        }
 
+        /**
+         * Define an array of settings_field arrays.
+         *
+         * @return array
+         */
+        abstract public function settings_fields(): array;
+
+        /**
+         * Define a settings field array for ->settings_fields abstract method.
+         *
+         * @param string $id
+         * @param string $title
+         * @param array $values
+         * @return array
+         */
+        public function setting_field(string $id, string $title = '', array $values = []): array
+        {
+            unset($values['id'], $values['title']);
+            return array_merge([
+                'id' => $id,
+                'title' => $title,
+                'type' => 'text',
+                'enum' => [],
+                'default' => '',
+                'description' => '',
+                'section' => 'default',
+                'attributes' => [],
+                'disabled' => false,
+                'readonly' => false,
+                'required' => false,
+                'sanitize' => 'sanitize_text_field',
+                'validation' => 'is_string',
+                'args' => [],
+            ], $values);
+        }
+
+        /**
+         * Get the default settings values.
+         *
+         * @return array
+         */
+        public function settings_defaults(): array
+        {
+            $defaults = [];
+            foreach ($this->settings_fields() as $field) {
+                $default = $field['default'] ?? '';
+                if ($default instanceof \Closure) {
+                    $default = call_user_func($default);
+                }
+                $defaults[$field['id']] = $default;
+            }
+            return $defaults;
+        }
+
+        /**
+         * Get the required settings fields.
+         *
+         * @return array
+         */
+        public function settings_required(): array
+        {
+            $fields = [];
+            foreach ($this->settings_fields() as $field) {
+                $required = $field['required'] ?? false;
+                if ($required instanceof \Closure) {
+                    $required = call_user_func($required);
+                }
+                if ($required === true) {
+                    $fields[$field['id']] = $required;
+                }
+            }
+            return $fields;
+        }
+
+        /**
+         * Get a default setting value.
+         *
+         * @param string $key
+         * @return mixed
+         */
+        public function setting_default(string $key): mixed
+        {
+            $defaults = $this->settings_defaults();
+            if ($key === '' || !isset($defaults[$key])) {
+                return null;
+            }
+            return $defaults[$key];
+        }
+
+        /**
+         * Get the settings values.
+         *
+         * @return array
+         */
+        public function settings(): mixed
+        {
+            return $this->option($this->plugin->slug)->get($this->settings_defaults(), $this->plugin->slug);
+        }
+
+        /**
+         * Get a setting value.
+         *
+         * @param string $key
+         * @param mixed $default
+         * @return mixed
+         */
+        public function setting(string $key, $default = null): mixed
+        {
+            $settings = $this->settings();
+            if ($key == '' || !isset($settings[$key])) {
+                return $default;
+            }
+            return $settings[$key];
+        }
+
+        /**
+         * Sanitize and validate the settings.
+         *
+         * @param array $input
+         * @return array
+         */
         public function settings_sanitize(array $input): array
         {
             // get validators and sanitizers
             $sanitizers = [];
             $validators = [];
-            foreach ($this->fields as $field) {
-                $field_sanitize_callback = $field['sanitize_callback'] ?? 'sanitize_text_field';
-                $sanitizers[$field['id']] = $field_sanitize_callback;
-                $field_validation_callback = $field['validation_callback'] ?? '';
-                $validators[$field['id']] = $field_validation_callback;
+            foreach ($this->settings_fields() as $field) {
+                $sanitizers[$field['id']] = $field['sanitize'] ?? 'sanitize_text_field';
+                $validators[$field['id']] = $field['validation'] ?? '';
             }
 
             foreach ($input as $key => $value) {
+                // remove any extra keys
+                if (!isset($sanitizers[$key])) {
+                    unset($input[$key]);
+                    continue;
+                }
+
                 // sanitize
                 $sanitize_callback = $sanitizers[$key] ?? '';
                 if (is_callable($sanitize_callback)) {
@@ -68,8 +192,16 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
             return $input;
         }
 
-        public function register_settings(array $fields = []): void
+        /**
+         * Register the settings.
+         *
+         * @param array $fields
+         * @return void
+         */
+        public function settings_register(array $fields = []): void
         {
+            $fields = !empty($fields) ? $fields : $this->settings_fields();
+
             // validate fields
             if (empty($fields)) {
                 throw new \Exception('Fields are required.');
@@ -81,7 +213,6 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
             }
 
             // register the settings group and fields
-            $this->fields = $fields;
             $slug = $this->plugin->slug;
 
             register_setting($slug, $slug, [
@@ -90,92 +221,164 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                 'show_in_rest' => false,
             ]);
 
-            add_settings_section('default', 'Settings', null, $slug);
+            $callback = function ($field, $key, $default = '') {
+                if (!isset($field[$key])) {
+                    return $default;
+                }
+                if ($field[$key] instanceof \Closure) {
+                    return call_user_func($field[$key]);
+                }
+                return $field[$key];
+            };
 
+            // sections
+            $sections = [];
+            add_settings_section('default', '', null, $slug);
             foreach ($fields as $field) {
-                $callback = function ($key, $default = '') use ($field) {
-                    if (!isset($field[$key])) {
-                        return $default;
-                    }
-                    if ($field[$key] instanceof \Closure) {
-                        return call_user_func($field[$key]);
-                    }
-                    return $field[$key];
-                };
+                $section = $callback($field, 'section', 'default');
+                if (isset($sections[$section]) || $section === 'default') {
+                    continue;
+                }
+                add_settings_section($section, $section, null, $slug);
+                $sections[$section] = $section;
+            }
 
-                $id = $callback('id');
-                $label = $callback('label', $id);
-                $type = $callback('type', 'text');
-                $attributes = $callback('attributes', []);
-                $description = $callback('description', '');
-                $default = $callback('default', '');
-                $enum = $callback('enum', []);
+            // fields
+            foreach ($fields as $field) {
+                $id = $callback($field, 'id');
+                $title = $callback($field, 'title', $id);
+                $type = $callback($field, 'type', 'text');
+                $attributes = $callback($field, 'attributes', []);
+                $description = $callback($field, 'description', '');
+                $default = $callback($field, 'default', '');
+                $enum = $callback($field, 'enum', []);
+                $section = $callback($field, 'section', 'default');
+                $required = $callback($field, 'required', false);
+                $readonly = $callback($field, 'readonly', false);
+                $disabled = $callback($field, 'disabled', false);
+                $args = $callback($field, 'args', []);
+                $args['class'] = isset($args['class']) ? $args['class'] : '';
+                $args['class'] = trim($args['class'] . ' settings-field-row setting-field-' . $type);
 
                 add_settings_field(
                     $id,
-                    $label,
-                    function () use ($id, $type, $enum, $attributes, $description, $default) {
-                        echo $this->settings_render_field($id, $type, $enum, $default, $description, $attributes);
+                    $title,
+                    function () use ($id, $type, $title, $enum, $attributes, $description, $default, $required, $readonly, $disabled) {
+                        echo $this->settings_render_field($id, $type, $title, $enum, $default, $description, $attributes, $required, $readonly, $disabled);
                     },
-                    $slug
+                    $slug,
+                    $section,
+                    $args
                 );
             }
         }
 
-        public function settings(): array
-        {
-            return get_option($this->plugin->slug, $this->settings_defaults());
-        }
-
-        public function settings_defaults(): array
-        {
-            $defaults = [];
-            foreach ($this->fields as $field) {
-                $default = $field['default'] ?? '';
-                $defaults[$field['id']] = $default;
-            }
-            return $defaults;
-        }
-
-        public function settings_render_field(string $key, string $type = 'text', array $enum = [], $default = '', $description = '', array $attributes = []): string
+        /**
+         * Render the settings field.
+         *
+         * @param string $key
+         * @param string $type
+         * @param string $title
+         * @param array $enum
+         * @param mixed $default
+         * @param string $description
+         * @param array $attributes
+         * @param bool $required
+         * @param bool $readonly
+         * @param bool $disabled
+         * @return string
+         */
+        public function settings_render_field(string $key, string $type = 'text', $title = '', array $enum = [], $default = '', $description = '', array $attributes = [], bool $required = false, bool $readonly = false, bool $disabled = false): string
         {
             $slug = $this->plugin->slug;
-            $settings = get_option($slug, $this->settings_defaults());
-            $value = isset($settings[$key]) ? $settings[$key] : $default;
+            $value = $this->setting($key, $default);
 
             // attributes
             $attrs_array = [];
             $attrs_array = array_merge($attrs_array, $attributes);
             $attrs_array['aria-describedby'] = sprintf('%s-%s', $slug, $key);
             $attrs_array['title'] = $description;
+            if ($required === true) {
+                $attrs_array['required'] = 'required';
+            }
+            if ($readonly === true) {
+                $attrs_array['readonly'] = 'readonly';
+            }
+            if ($disabled === true) {
+                $attrs_array['disabled'] = 'disabled';
+            }
             $attrs = '';
             foreach ($attrs_array as $attr_key => $attr_value) {
                 $attrs .= sprintf('%s="%s" ', $attr_key, esc_attr($attr_value));
             }
             $attrs = trim($attrs);
 
-            // input field
-            $html = '';
+            // input fields
+            $html = "<fieldset class='field-type-{$type}'>";
+            $html .= "<legend class='screen-reader-text'><span>{$title}</span></legend>";
+
+            // show required *
+            // if ($required === true) {
+            //     $html .= sprintf('<strong class="required">*</strong>');
+            // }
+
             if ($type === 'checkbox') {
-                $checked = $value === 'enabled' ? 'checked' : '';
-                $html .= "<input type='{$type}' name='{$slug}[{$key}]' value='enabled' {$checked} {$attrs} />";
+                foreach ($enum as $checkbox_key => $checkbox_label) {
+                    $checked = $value === (string) $checkbox_key ? 'checked' : '';
+                    $html .= "<label><input type='{$type}' name='{$slug}[{$key}]' value='{$checkbox_key}' {$checked} {$attrs} />{$title}</label>";
+                    break;
+                }
+                // $html .= "<label for='{$slug}[{$key}]'><input type='{$type}' name='{$slug}[{$key}]' value='enabled' {$checked} {$attrs} />{$label}</label>";
             } elseif ($type === 'checkbox_group') {
                 foreach ($enum as $checkbox_key => $checkbox_label) {
                     $checked = isset($value[$checkbox_key]) && $value[$checkbox_key] === 'enabled' ? 'checked' : '';
                     $html .= "<label><input type='checkbox' name='{$slug}[{$key}][{$checkbox_key}]' value='enabled' {$checked} {$attrs} /> {$checkbox_label}</label><br />";
                 }
+            } elseif ($type === 'radio_group' || $type === 'radio') {
+                foreach ($enum as $radio_key => $radio_label) {
+                    $cast = is_bool($value) ? (int) $value : $value;
+                    $checked = $cast === $radio_key ? 'checked' : '';
+                    $html .= "<label><input type='radio' name='{$slug}[{$key}]' value='{$radio_key}' {$checked} {$attrs} /> {$radio_label}</label>";
+                }
+            } elseif ($type === 'select') {
+                $html .= "<select name='{$slug}[{$key}]' {$attrs}>";
+                foreach ($enum as $option_key => $option_label) {
+                    $selected = $value === (string) $option_key ? 'selected' : '';
+                    $html .= "<option value='{$option_key}' {$selected}>{$option_label}</option>";
+                }
+                $html .= "</select>";
+            } elseif ($type === 'number') {
+                $html .= "<input type='{$type}' name='{$slug}[{$key}]' value='{$value}' {$attrs} />";
+            } elseif ($type === 'textarea') {
+                $html .= "<textarea name='{$slug}[{$key}]' {$attrs}>{$value}</textarea>";
+            } elseif ($type === 'hidden') {
+                $html .= "<input type='{$type}' name='{$slug}[{$key}]' value='{$value}' {$attrs} />";
             } else {
                 $html .= "<input type='{$type}' name='{$slug}[{$key}]' value='{$value}' {$attrs} />";
             }
 
+            // show required *
+            if ($required === true) {
+                $html .= sprintf('<strong class="required">*</strong>');
+            }
+
             // description
             if (!empty($description)) {
-                $html .= sprintf('<p id="%s">%s</p>', $slug . '-' . $key, $description);
+                $html .= sprintf('<p id="%s" class="description" id="tagline-description">%s</p>', $slug . '-' . $key, $description);
             }
+
+            $html .= '</fieldset>';
             return $html;
         }
 
-        public function render_settings(string $title = ''): string
+        /**
+         * Render the settings form.
+         *
+         * @param string $title
+         * @param string $description
+         * @return string
+         */
+        public function settings_render(string $title = '', string $description = ''): string
         {
             $buffer = function (callable $callback, $args = []) {
                 ob_start();
@@ -190,23 +393,45 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
 
             $id = $slug;
             $title = !empty($title) ? sprintf('<h2>%s</h2>', $title) : '';
+            $description = !empty($description) ? sprintf('<p>%s</p>', $description) : '';
 
             $form = <<<HTML
             <div id="{$id}" class="wrap">
                 {$title}
+                {$description}
                 <style>
-                    #{$id} input {
-                        margin-right: 10px;
-                    }
-                    #{$id} input[type="text"] {
-                        width: 100%;
+                    #{$id} input, #{$id} select #{$id} textarea {
+                        display: inline;
                     }
 
-                    #{$id} input[type="number"] {
+                    #{$id} .field-type-radio_group label {
+                        padding-right: 10px;
+                    }
+                    #{$id} .form-table td fieldset label {
+                        margin-top: 0 !important;
+                    }
+
+                    #{$id} input[type="text"], #{$id} textarea {
+                        width: 95%;
+                    }
+                    #{$id} textarea {
+                        height: 80px;
+                    }
+                    #{$id} input[type="number"], #{$id} select {
                         width: 25%;
                     }
+                    #{$id} .setting-field-hidden th, #{$id} .setting-field-hidden td {
+                        margin: 0;
+                        padding: 0;
+                    }
+
+                    #{$id} strong.required {
+                        padding-left: 5px;
+                        vertical-align: top;
+                        color: #a00;
+                    }
                 </style>
-                <form method="post" action="options.php">
+                <form method="post" action="options.php" class="settings-fields-form">
                     {$fields}
                     {$sections}
                     {$button}
