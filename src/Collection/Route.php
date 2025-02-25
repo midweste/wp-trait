@@ -31,7 +31,7 @@ if (!class_exists('WPTrait\Collection\Route')) {
             }
 
             # Sanitize method name
-            $args['methods'] = array_map('strtoupper', $args['methods']);
+            $args['methods'] = array_map('strtoupper', (array) $args['methods']);
 
             # Sanitize Callback Method
             if (is_string($args['callback'])) {
