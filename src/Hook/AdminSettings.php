@@ -123,7 +123,11 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
          */
         public function settings(): mixed
         {
-            return $this->option($this->plugin->slug)->get($this->settings_defaults(), $this->plugin->slug);
+            $option = $this->option($this->plugin->slug);
+            $defaults = $this->settings_defaults();
+            $settings = $option->get($defaults, $this->plugin->slug);
+            $merged = array_merge($defaults, $settings);
+            return $merged;
         }
 
         /**
