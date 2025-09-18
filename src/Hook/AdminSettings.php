@@ -70,6 +70,12 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
          */
         public function settings_defaults(): array
         {
+            static $cache = [];
+            $name = get_class($this);
+            if (!empty($cache[$name])) {
+                return $cache[$name];
+            }
+
             $defaults = [];
             foreach ($this->settings_fields() as $field) {
                 $default = $field['default'] ?? '';
@@ -78,6 +84,7 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                 }
                 $defaults[$field['id']] = $default;
             }
+            $cache[$name] = $defaults;
             return $defaults;
         }
 
@@ -88,6 +95,12 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
          */
         public function settings_required(): array
         {
+            static $cache = [];
+            $name = get_class($this);
+            if (!empty($cache[$name])) {
+                return $cache[$name];
+            }
+
             $fields = [];
             foreach ($this->settings_fields() as $field) {
                 $required = $field['required'] ?? false;
@@ -98,6 +111,7 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                     $fields[$field['id']] = $required;
                 }
             }
+            $cache[$name] = $fields;
             return $fields;
         }
 
