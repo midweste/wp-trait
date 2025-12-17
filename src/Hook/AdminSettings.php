@@ -242,6 +242,22 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                 $validators[$field['id']] = $field['validation'] ?? '';
             }
 
+            // Handle checkboxes that don't submit when unchecked
+            foreach ($this->settings_fields() as $field) {
+                if ($field['type'] === 'checkbox' && !isset($input[$field['id']])) {
+                    // Check if this field was previously set (has a saved value)
+                    $current_value = $this->setting($field['id'], null);
+                    if ($current_value !== null) {
+                        // Field was set before, now unchecked - save as empty string
+                        // This indicates "explicitly unchecked" vs "never set"
+                        $input[$field['id']] = '';
+                    } else {
+                        // Field never set before - use default directly
+                        $input[$field['id']] = $field['default'] ?? '';
+                    }
+                }
+            }
+
             foreach ($input as $key => $value) {
                 // remove any extra keys
                 if (!isset($sanitizers[$key])) {
@@ -379,10 +395,11 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
          * @param bool $disabled
          * @return string
          */
-        public function settings_render_field(string $key, string $type = 'text', $title = '', array $enum = [], $default = '', $description = '', array $attributes = [], bool $required = false, bool $readonly = false, bool $disabled = false): string
+        public function settings_render_field(string $key, string $type = 'text', string $title = '', array $enum = [], $default = '', string $description = '', array $attributes = [], bool $required = false, bool $readonly = false, bool $disabled = false): string
         {
             $slug = $this->plugin->slug;
             $value = $this->setting($key, $default);
+
 
             // attributes
             $attrs_array = array_merge([], $attributes);
@@ -403,6 +420,18 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
             }
             $attrs = trim($attrs);
 
+            // Centralized value converter for type coercion
+            $value_converter = function ($value) {
+                // Handle type coercion for WordPress settings (saved as strings)
+                if (is_string($value) && is_numeric($value)) {
+                    return (int) $value;
+                }
+                if (is_bool($value)) {
+                    return (int) $value;  // true → 1, false → 0
+                }
+                return $value;
+            };
+
             // input fields
             $html = "<fieldset class='field-type-{$type}'>";
             $html .= "<legend class='screen-reader-text'><span>{$title}</span></legend>";
@@ -414,8 +443,9 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
 
             if ($type === 'checkbox') {
                 foreach ($enum as $checkbox_key => $checkbox_label) {
-                    $checked = $value == $checkbox_key ? 'checked' : '';
-                    $html .= "<label><input type='{$type}' name='{$slug}[{$key}]' value='{$checkbox_key}' {$checked} {$attrs} />{$title}</label>";
+                    // Handle empty string as "unchecked" state
+                    $checked = ($value !== '' && $value_converter($value) == $checkbox_key) ? 'checked="checked"' : '';
+                    $html .= "<label><input type='checkbox' name='{$slug}[{$key}]' value='{$checkbox_key}' {$checked} {$attrs} />{$checkbox_label}</label>";
                     break;
                 }
                 // $html .= "<label for='{$slug}[{$key}]'><input type='{$type}' name='{$slug}[{$key}]' value='enabled' {$checked} {$attrs} />{$label}</label>";
@@ -426,21 +456,13 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                 }
             } elseif ($type === 'radio_group' || $type === 'radio') {
                 foreach ($enum as $radio_key => $radio_label) {
-                    // Better type handling for radio button comparison
-                    $checked_value = $value;
-                    if (is_bool($value)) {
-                        $checked_value = (int) $value;
-                    } elseif (is_string($value) && is_numeric($value)) {
-                        $checked_value = (int) $value;
-                    }
-
-                    $checked = $checked_value === $radio_key ? 'checked' : '';
+                    $checked = $value_converter($value) === $radio_key ? 'checked' : '';
                     $html .= "<label><input type='radio' name='{$slug}[{$key}]' value='{$radio_key}' {$checked} {$attrs} /> {$radio_label}</label>";
                 }
             } elseif ($type === 'select') {
                 $html .= "<select name='{$slug}[{$key}]' {$attrs}>";
                 foreach ($enum as $option_key => $option_label) {
-                    $selected = $value === (string) $option_key ? 'selected' : '';
+                    $selected = $value_converter($value) == $option_key ? 'selected' : '';
                     $html .= "<option value='{$option_key}' {$selected}>{$option_label}</option>";
                 }
                 $html .= "</select>";
