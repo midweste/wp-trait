@@ -337,6 +337,12 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                 $description = $callback($field, 'description', '');
                 $default = $callback($field, 'default', '');
                 $enum = $callback($field, 'enum', []);
+                $options = $callback($field, 'options', []);
+
+                // For select fields, support both 'enum' and 'options'
+                if ($type === 'select' && !empty($options)) {
+                    $enum = $options;
+                }
                 $section = $callback($field, 'section', 'default');
                 $required = $callback($field, 'required', false);
                 $readonly = $callback($field, 'readonly', false);
