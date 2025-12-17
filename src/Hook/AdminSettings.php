@@ -161,6 +161,72 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
         }
 
         /**
+         * Set a specific setting value.
+         *
+         * @param string $key
+         * @param mixed $value
+         * @return bool
+         */
+        public function setting_set(string $key, $value): bool
+        {
+            if (empty($key)) {
+                return false;
+            }
+
+            $settings = $this->settings();
+            $settings[$key] = $value;
+
+            $option = $this->option($this->plugin->slug);
+            return $option->update($settings);
+        }
+
+        /**
+         * Delete a specific setting value (resets to default).
+         *
+         * @param string $key
+         * @return bool
+         */
+        public function setting_delete(string $key): bool
+        {
+            if (empty($key)) {
+                return false;
+            }
+
+            $settings = $this->settings();
+            if (isset($settings[$key])) {
+                unset($settings[$key]);
+
+                $option = $this->option($this->plugin->slug);
+                return $option->update($settings);
+            }
+
+            return true; // Key didn't exist, consider it successful
+        }
+
+        /**
+         * Clear all settings (resets to defaults).
+         *
+         * @return bool
+         */
+        public function settings_clear(): bool
+        {
+            $option = $this->option($this->plugin->slug);
+            return $option->delete();
+        }
+
+        /**
+         * Reset all settings to defaults.
+         *
+         * @return bool
+         */
+        public function settings_reset(): bool
+        {
+            $defaults = $this->settings_defaults();
+            $option = $this->option($this->plugin->slug);
+            return $option->update($defaults);
+        }
+
+        /**
          * Sanitize and validate the settings.
          *
          * @param array $input
@@ -239,7 +305,8 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                 'show_in_rest' => false,
             ]);
 
-            $callback = function ($field, $key, $default = '') {
+            $callback = function ($field, $key, $default = null) {
+                $default = is_null($default) ? '' : $default;
                 if (!isset($field[$key])) {
                     return $default;
                 }
@@ -312,8 +379,7 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
             $value = $this->setting($key, $default);
 
             // attributes
-            $attrs_array = [];
-            $attrs_array = array_merge($attrs_array, $attributes);
+            $attrs_array = array_merge([], $attributes);
             $attrs_array['aria-describedby'] = sprintf('%s-%s', $slug, $key);
             $attrs_array['title'] = $description;
             if ($required === true) {
@@ -354,8 +420,15 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                 }
             } elseif ($type === 'radio_group' || $type === 'radio') {
                 foreach ($enum as $radio_key => $radio_label) {
-                    $cast = is_bool($value) ? (int) $value : $value;
-                    $checked = $cast === $radio_key ? 'checked' : '';
+                    // Better type handling for radio button comparison
+                    $checked_value = $value;
+                    if (is_bool($value)) {
+                        $checked_value = (int) $value;
+                    } elseif (is_string($value) && is_numeric($value)) {
+                        $checked_value = (int) $value;
+                    }
+
+                    $checked = $checked_value === $radio_key ? 'checked' : '';
                     $html .= "<label><input type='radio' name='{$slug}[{$key}]' value='{$radio_key}' {$checked} {$attrs} /> {$radio_label}</label>";
                 }
             } elseif ($type === 'select') {
@@ -382,7 +455,7 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
 
             // description
             if (!empty($description)) {
-                $html .= sprintf('<p id="%s" class="description" id="tagline-description">%s</p>', $slug . '-' . $key, $description);
+                $html .= sprintf('<p id="%s" class="description">%s</p>', $slug . '-' . $key, $description);
             }
 
             $html .= '</fieldset>';
@@ -418,12 +491,13 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                 {$title}
                 {$description}
                 <style>
-                    #{$id} input, #{$id} select #{$id} textarea {
+                    #{$id} input, #{$id} select, #{$id} textarea {
                         display: inline;
                     }
 
-                    #{$id} .field-type-radio_group label {
+                    #{$id} .field-type-radio label, #{$id} .field-type-radio_group label {
                         padding-right: 10px;
+                        margin-right: 15px;
                     }
                     #{$id} .form-table td fieldset label {
                         margin-top: 0 !important;
