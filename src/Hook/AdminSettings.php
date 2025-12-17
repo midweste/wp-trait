@@ -408,7 +408,7 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
 
             if ($type === 'checkbox') {
                 foreach ($enum as $checkbox_key => $checkbox_label) {
-                    $checked = $value === (string) $checkbox_key ? 'checked' : '';
+                    $checked = $value == $checkbox_key ? 'checked' : '';
                     $html .= "<label><input type='{$type}' name='{$slug}[{$key}]' value='{$checkbox_key}' {$checked} {$attrs} />{$title}</label>";
                     break;
                 }
