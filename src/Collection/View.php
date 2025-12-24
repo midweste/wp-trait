@@ -101,7 +101,6 @@ if (!class_exists('WPTrait\Collection\View')) {
             }
             include $view;
             $output = ob_get_clean();
-            ob_end_clean();
 
             return $output;
         }
