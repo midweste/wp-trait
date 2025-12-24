@@ -27,6 +27,11 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
             $this->settings_register($this->settings_fields());
         }
 
+        public function settings_option_name(): string
+        {
+            return $this->plugin->slug;
+        }
+
         /**
          * Define an array of settings_field arrays.
          *
