@@ -50,20 +50,42 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
         public function setting_field(string $id, string $title = '', array $values = []): array
         {
             unset($values['id'], $values['title']);
+
+            // Type-specific defaults
+            $type = $values['type'] ?? 'text';
+
+            if ($type === 'checkbox_group') {
+                $sanitize = fn($v) => array_map('sanitize_text_field', (array) $v);
+                $validation = 'is_array';
+                $default = [];
+            } elseif ($type === 'number') {
+                $sanitize = 'intval';
+                $validation = 'is_numeric';
+                $default = 0;
+            } elseif ($type === 'textarea') {
+                $sanitize = 'sanitize_textarea_field';
+                $validation = 'is_string';
+                $default = '';
+            } else {
+                $sanitize = 'sanitize_text_field';
+                $validation = 'is_string';
+                $default = '';
+            }
+
             return array_merge([
                 'id' => $id,
                 'title' => $title,
-                'type' => 'text',
+                'type' => $type,
                 'enum' => [],
-                'default' => '',
+                'default' => $default,
                 'description' => '',
                 'section' => 'default',
                 'attributes' => [],
                 'disabled' => false,
                 'readonly' => false,
                 'required' => false,
-                'sanitize' => 'sanitize_text_field',
-                'validation' => 'is_string',
+                'sanitize' => $sanitize,
+                'validation' => $validation,
                 'args' => [],
             ], $values);
         }
@@ -146,6 +168,34 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
             $defaults = $this->settings_defaults();
             $settings = $option->get($defaults, $this->plugin->slug);
             $merged = array_merge($defaults, $settings);
+
+            // Auto-migrate checkbox_group fields from old associative format to indexed array
+            $migrated = false;
+            foreach ($this->settings_fields() as $field) {
+                $type = $field['type'] ?? '';
+                if ($type !== 'checkbox_group') {
+                    continue;
+                }
+                $key = $field['id'];
+                $value = $merged[$key] ?? [];
+                if (!is_array($value) || empty($value)) {
+                    continue;
+                }
+                // Skip if already indexed array (new format)
+                if (array_keys($value) === range(0, count($value) - 1)) {
+                    continue;
+                }
+                // Migrate: ['editor' => 'enabled'] → ['editor']
+                $merged[$key] = array_keys(array_filter($value, fn($v) => $v === 'enabled'));
+                $migrated = true;
+            }
+
+            if ($migrated) {
+                $option->update($merged, null);
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+                error_log(sprintf('[AdminSettings] Migrated checkbox_group settings for %s', $this->plugin->slug));
+            }
+
             return $merged;
         }
 
@@ -260,6 +310,16 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                         // Field never set before - use default directly
                         $input[$field['id']] = $field['default'] ?? '';
                     }
+                } elseif ($field['type'] === 'checkbox_group' && !isset($input[$field['id']])) {
+                    // Check if this field was previously set (has a saved value)
+                    $current_value = $this->setting($field['id'], null);
+                    if ($current_value !== null) {
+                        // Field was set before, now all unchecked - save as empty array
+                        $input[$field['id']] = [];
+                    } else {
+                        // Field never set before - use default directly
+                        $input[$field['id']] = $field['default'] ?? [];
+                    }
                 }
             }
 
@@ -275,7 +335,7 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                 if (is_callable($sanitize_callback)) {
                     $input[$key] = call_user_func($sanitize_callback, $value);
                 } else {
-                    $input[$key] = sanitize_text_field($value);
+                    $input[$key] = is_array($value) ? array_map('sanitize_text_field', $value) : sanitize_text_field($value);
                 }
 
                 // validate
@@ -312,7 +372,7 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                 throw new \Exception('Fields are required.');
             }
             foreach ($fields as $field) {
-                if (empty($field['id']) && !$field['id'] instanceof \Closure) {
+                if (empty($field['id']) && !($field['id'] instanceof \Closure)) {
                     throw new \Exception('Field id is required.');
                 }
             }
@@ -455,9 +515,15 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                 }
                 // $html .= "<label for='{$slug}[{$key}]'><input type='{$type}' name='{$slug}[{$key}]' value='enabled' {$checked} {$attrs} />{$label}</label>";
             } elseif ($type === 'checkbox_group') {
+                $value = is_array($value) ? $value : [];
                 foreach ($enum as $checkbox_key => $checkbox_label) {
-                    $checked = isset($value[$checkbox_key]) && $value[$checkbox_key] === 'enabled' ? 'checked' : '';
-                    $html .= "<label><input type='checkbox' name='{$slug}[{$key}][{$checkbox_key}]' value='enabled' {$checked} {$attrs} /> {$checkbox_label}</label><br />";
+                    // Support all formats: ['key' => 'enabled'], ['key' => 'key'], ['key1', 'key2']
+                    $is_selected = isset($value[$checkbox_key])
+                        ? ($value[$checkbox_key] === 'enabled' || $value[$checkbox_key] === $checkbox_key)
+                        : in_array($checkbox_key, $value, true);
+
+                    $checked = $is_selected ? 'checked' : '';
+                    $html .= "<label><input type='checkbox' name='{$slug}[{$key}][]' value='{$checkbox_key}' {$checked} {$attrs} /> {$checkbox_label}</label><br />";
                 }
             } elseif ($type === 'radio_group' || $type === 'radio') {
                 foreach ($enum as $radio_key => $radio_label) {
@@ -524,7 +590,7 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                 {$title}
                 {$description}
                 <style>
-                    #{$id} input, #{$id} select, #{$id} textarea {
+                    #{$id} input[type="text"], #{$id} input[type="number"], #{$id} select, #{$id} textarea {
                         display: inline;
                     }
 
@@ -540,7 +606,7 @@ if (!trait_exists('WPTrait\Hook\AdminSettings')) {
                         width: 95%;
                     }
                     #{$id} textarea {
-                        height: 80px;
+                        height: 200px;
                     }
                     #{$id} input[type="number"], #{$id} select {
                         width: 25%;
